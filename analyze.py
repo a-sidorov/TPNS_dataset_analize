@@ -177,7 +177,6 @@ def compute_correlation_matrix(data: list[list], headers: list[str]) -> p.DataFr
 
     data_frame = p.DataFrame(np_dataset, columns=headers)
     correlation_matrix = data_frame.corr(min_periods=1)
-    correlation_matrix.values[np.tril_indices(len(correlation_matrix))] = np.nan
 
     correlation_matrix.to_csv('correlation.csv', sep=';', float_format='%.3f')
 
