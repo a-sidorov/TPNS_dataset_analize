@@ -194,21 +194,15 @@ def main() -> None:
 
         attr_correlated_elements = np.extract(correlation_matrix >= 0.95, correlation_matrix)
         i, j = np.where(correlation_matrix >= 0.95)
-        print(attr_correlated_elements)
-        print(i, j)
 
+        print("====================================================")
         for k in range(len(i)):
-            print(headers[i[k]] + ' ' + headers[j[k]])
+            print(headers[i[k]] + ' ' + headers[j[k]] + ' ', round(attr_correlated_elements[k], 2))
 
-        # with open('out.csv', 'w', encoding='UTF-8') as out:
-        #     writer = csv.writer(out, delimiter=';', lineterminator='\t\n')
-        #     writer.writerow(headers)
-        #     writer.writerows(data)
-        #
-        # with open('correlation.csv', 'w', encoding='UTF-8') as out:
-        #     writer = csv.writer(out, delimiter=';', lineterminator='\t\n')
-        #     writer.writerow(headers)
-        #     writer.writerows(correlation_matrix)
+        with open('out.csv', 'w', encoding='UTF-8') as out:
+            writer = csv.writer(out, delimiter=';', lineterminator='\t\n')
+            writer.writerow(headers)
+            writer.writerows(data)
 
 
 if __name__ == '__main__':
