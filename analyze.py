@@ -1,6 +1,5 @@
 #!python
-
-import pprint
+import json
 import statistics
 from math import isnan, log, sqrt
 
@@ -11,8 +10,6 @@ from matplotlib import pyplot as plt
 
 import csv
 from const import CLEAN_DATA_FILE_NAME
-
-pp = pprint.PrettyPrinter(indent=4)
 
 
 def has_value(cell: str) -> bool:
@@ -61,6 +58,54 @@ def plot_histogram_sns(data: list[float], name: str = "") -> None:
     plt.savefig(name + '.jpg')
 
 
+def unique_counts(np_arr: np.ndarray) -> (np.ndarray, np.ndarray):
+    np_arr_unique, np_arr_counts = np.unique(np_arr, return_counts=True, axis=0)
+    if len(np_arr.shape) == 1:
+        np_arr_unique = np_arr_unique[~np.isnan(np_arr_unique)]
+        actual_length = len(np_arr_unique)
+        if len(np_arr_counts) != actual_length:
+            np_arr_unique = np.append(np_arr_unique, float("nan"))
+            isnan_count = np_arr_counts[np_arr_unique.shape[0] - 1:].sum()
+            np_arr_counts = np_arr_counts[:np_arr_unique.shape[0]]
+            np_arr_counts[np_arr_unique.shape[0] - 1] = isnan_count
+    return np_arr_unique, np_arr_counts
+
+
+def gain_ratio(class_: list[list], feature: list) -> float:
+    class_ = np.array(class_).astype(float)
+    feature = np.array(feature).astype(float)
+
+    hc = 0
+    classes_unique, classes_counts = unique_counts(class_)
+    for c_iter in classes_counts:
+        pc = c_iter / class_.shape[0]
+        hc += - pc * log(pc, 2)
+
+    hc_feature = 0
+    split_info = 0
+    feat_unique, feat_counts = unique_counts(feature)
+    for feat_index in range(len(feat_unique)):
+        pf = feat_counts[feat_index] / feature.shape[0]
+
+        if np.isnan(feat_unique[feat_index]):
+            indices = [i for i in range(0, feature.shape[0]) if np.isnan(feature[i])]
+        else:
+            indices = [i for i in range(0, feature.shape[0]) if feature[i] == feat_unique[feat_index]]
+
+        clasess_of_feat = class_[indices]
+
+        for class_index in range(classes_unique.shape[0]):
+            pcf = np.count_nonzero(clasess_of_feat == classes_unique[class_index]) / clasess_of_feat.shape[0]
+            if pcf != 0:
+                temp_h = - pf * pcf * log(pcf, 2)
+                hc_feature += temp_h
+
+        si = clasess_of_feat.shape[0] / class_.shape[0]
+        split_info += - si * log(si, 2)
+
+    return (hc - hc_feature) / split_info
+
+
 def analyze_attribute(values: list) -> dict:
     values = sorted(values)
     result: dict[str, [float, int, str]] = {}
@@ -75,6 +120,8 @@ def analyze_attribute(values: list) -> dict:
     unique_values = set(actual_values)
     unique_values_count = len(unique_values)
     result['unique'] = unique_values_count
+
+    # result['gain'] = 0.0
 
     def analyze_continuous():
         result['type'] = 'continuous'
@@ -150,6 +197,8 @@ def main() -> None:
         attribute_info = {}
         to_remove = []
 
+        target = [row[-2:] for row in data]
+
         for i in range(len(headers)):
             values = [row[i] for row in data]
             if all(isnan(it) for it in values):
@@ -169,16 +218,19 @@ def main() -> None:
             attribute_info[i] = analysis_result
 
         for attribute, info in attribute_info.items():
+            values = [row[attribute] for row in data]
+            info.update({'gain': gain_ratio(target, values)})
+
             print(headers[attribute])
-            pp.pprint(info)
             unique_count = info['unique']
             total_count = info['total']
 
             if unique_count < total_count * 0.15:
-                print("МАЛО ЗНОЧЕНИЙ")
+                print('few unique values')
+            print(json.dumps(info, indent=4), '\n')
 
-        # for i in range(len(headers)):
-        #     plot_histogram_sns([row[i] for row in data if not isnan(row[i])], headers[i])
+        for i in range(len(headers)):
+            plot_histogram_sns([row[i] for row in data if not isnan(row[i])], headers[i])
 
         # to_remove.reverse()
         #
