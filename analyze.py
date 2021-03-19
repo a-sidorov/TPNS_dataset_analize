@@ -5,6 +5,7 @@ import statistics
 from math import isnan, log, sqrt
 
 import numpy as np
+import pandas as p
 import seaborn as sns
 from matplotlib import pyplot as plt
 
@@ -52,12 +53,12 @@ def plot_histogram_sns(data: list[float], name: str = "") -> None:
         print(name + ' has 0 variance, can not define distribution')
         sns.displot(np_dataset, bins=int(n))
         plt.title(f'{name}')
-        plt.savefig(name+'.jpg')
+        plt.savefig(name + '.jpg')
         return
 
     sns.displot(np_dataset, kde=True, bins=int(n))
     plt.title(f'{name}')
-    plt.savefig(name+'.jpg')
+    plt.savefig(name + '.jpg')
 
 
 def analyze_attribute(values: list) -> dict:
@@ -124,19 +125,15 @@ def impute_data(data: list[list], i: int, analysis_result: dict) -> None:
                 row[i] = mean
 
 
-def compute_correlation_matrix(data: list[list]) -> np.ndarray:
+def compute_correlation_matrix(data: list[list], headers: list[str]) -> p.DataFrame:
     np_dataset = np.array(data).astype(float)
-    # np_dataset = np_dataset[:, :-1]
 
-    # print(np_dataset)
+    data_frame = p.DataFrame(np_dataset, columns=headers)
+    correlation_matrix = data_frame.corr(min_periods=1)
+    correlation_matrix.values[np.tril_indices(len(correlation_matrix))] = np.nan
 
-    correlation_matrix = np.zeros((np_dataset.shape[1], np_dataset.shape[1]))
+    correlation_matrix.to_csv('correlation.csv', sep=';', float_format='%.3f')
 
-    for i in range(0, np_dataset.shape[1]):
-        for j in range(0, np_dataset.shape[1]):
-            correlation_matrix[i, j] = np.corrcoef(np_dataset[:, i], np_dataset[:, j])[0, 1]
-            correlation_matrix[i, j] = round(correlation_matrix[i, j], 2)
-    correlation_matrix = np.tril(correlation_matrix, -1)
     return correlation_matrix
 
 
@@ -180,17 +177,17 @@ def main() -> None:
             if unique_count < total_count * 0.15:
                 print("МАЛО ЗНОЧЕНИЙ")
 
-        for i in range(len(headers)):
-            plot_histogram_sns([row[i] for row in data if not isnan(row[i])], headers[i])
+        # for i in range(len(headers)):
+        #     plot_histogram_sns([row[i] for row in data if not isnan(row[i])], headers[i])
 
-        to_remove.reverse()
+        # to_remove.reverse()
+        #
+        # for index in to_remove:
+        #     del headers[index]
+        #     for row in data:
+        #         del row[index]
 
-        for index in to_remove:
-            del headers[index]
-            for row in data:
-                del row[index]
-
-        correlation_matrix = compute_correlation_matrix(data)
+        correlation_matrix = compute_correlation_matrix(data, headers)
 
         sns.heatmap(correlation_matrix)
         plt.savefig('heatmap.jpg')
@@ -203,15 +200,15 @@ def main() -> None:
         for k in range(len(i)):
             print(headers[i[k]] + ' ' + headers[j[k]])
 
-        with open('out.csv', 'w', encoding='UTF-8') as out:
-            writer = csv.writer(out, delimiter=';', lineterminator=';\n')
-            writer.writerow(headers)
-            writer.writerows(data)
-
-        with open('correlation.csv', 'w', encoding='UTF-8') as out:
-            writer = csv.writer(out, delimiter=';', lineterminator=';\n')
-            writer.writerow(headers)
-            writer.writerows(correlation_matrix)
+        # with open('out.csv', 'w', encoding='UTF-8') as out:
+        #     writer = csv.writer(out, delimiter=';', lineterminator='\t\n')
+        #     writer.writerow(headers)
+        #     writer.writerows(data)
+        #
+        # with open('correlation.csv', 'w', encoding='UTF-8') as out:
+        #     writer = csv.writer(out, delimiter=';', lineterminator='\t\n')
+        #     writer.writerow(headers)
+        #     writer.writerows(correlation_matrix)
 
 
 if __name__ == '__main__':
