@@ -58,52 +58,73 @@ def plot_histogram_sns(data: list[float], name: str = "") -> None:
     plt.savefig(name + '.jpg')
 
 
+def reverse_enum(arr: np.ndarray):
+    for index in reversed(range(len(arr))):
+        yield index, arr[index]
+
+
 def unique_counts(np_arr: np.ndarray) -> (np.ndarray, np.ndarray):
     np_arr_unique, np_arr_counts = np.unique(np_arr, return_counts=True, axis=0)
     if len(np_arr.shape) == 1:
         np_arr_unique = np_arr_unique[~np.isnan(np_arr_unique)]
         actual_length = len(np_arr_unique)
         if len(np_arr_counts) != actual_length:
-            np_arr_unique = np.append(np_arr_unique, float("nan"))
+            np_arr_unique = np.append(np_arr_unique, np.nan)
             isnan_count = np_arr_counts[np_arr_unique.shape[0] - 1:].sum()
             np_arr_counts = np_arr_counts[:np_arr_unique.shape[0]]
             np_arr_counts[np_arr_unique.shape[0] - 1] = isnan_count
+    else:
+        if np_arr.shape[1] == 2:
+            for index, value in reverse_enum(np_arr_unique):
+                if index != 0:
+                    if np.isnan(value[0]) and np.isnan(np_arr_unique[index - 1][0]) and np_arr_unique[index - 1][1] == \
+                            value[1]:
+                        np_arr_unique = np.delete(np_arr_unique, index, axis=0)
+                        np_arr_counts[index - 1] += np_arr_counts[index]
+                        np_arr_counts = np.delete(np_arr_counts, index, axis=0)
+
     return np_arr_unique, np_arr_counts
 
 
-def gain_ratio(class_: list[list], feature: list) -> float:
+def entropy(feature_count: float, domain_size: float) -> float:
+    feature_probability = feature_count / domain_size
+    return - feature_probability * log(feature_probability, 2)
+
+
+def gain_ratio(class_: list[list], feature: list[float]) -> float:
     class_ = np.array(class_).astype(float)
     feature = np.array(feature).astype(float)
 
-    hc = 0
+    info_class = 0
     classes_unique, classes_counts = unique_counts(class_)
-    for c_iter in classes_counts:
-        pc = c_iter / class_.shape[0]
-        hc += - pc * log(pc, 2)
 
-    hc_feature = 0
+    for c_iter in classes_counts:
+        info_class += entropy(c_iter, class_.shape[0])
+
+    info_class_by_feature = 0
     split_info = 0
     feat_unique, feat_counts = unique_counts(feature)
+
     for feat_index in range(len(feat_unique)):
-        pf = feat_counts[feat_index] / feature.shape[0]
+        feature_probability = feat_counts[feat_index] / feature.shape[0]
 
         if np.isnan(feat_unique[feat_index]):
+            # TODO: считать ли NaN за отдельный класс?
             indices = [i for i in range(0, feature.shape[0]) if np.isnan(feature[i])]
         else:
             indices = [i for i in range(0, feature.shape[0]) if feature[i] == feat_unique[feat_index]]
 
-        clasess_of_feat = class_[indices]
+        classes_of_feature = class_[indices]
 
-        for class_index in range(classes_unique.shape[0]):
-            pcf = np.count_nonzero(clasess_of_feat == classes_unique[class_index]) / clasess_of_feat.shape[0]
-            if pcf != 0:
-                temp_h = - pf * pcf * log(pcf, 2)
-                hc_feature += temp_h
+        classes_of_feature_unique, classes_of_feature_count = unique_counts(classes_of_feature)
+        for class_index in range(classes_of_feature_unique.shape[0]):
+            class_of_feature_count = classes_of_feature_count[class_index]
+            info_class_by_feature += feature_probability * entropy(class_of_feature_count, classes_of_feature.shape[0])
+        split_info += - feature_probability * log(feature_probability, 2)
 
-        si = clasess_of_feat.shape[0] / class_.shape[0]
-        split_info += - si * log(si, 2)
+    information_gain = info_class - info_class_by_feature
 
-    return (hc - hc_feature) / split_info
+    return information_gain / split_info
 
 
 def analyze_attribute(values: list) -> dict:
@@ -121,10 +142,6 @@ def analyze_attribute(values: list) -> dict:
     unique_values_count = len(unique_values)
     result['unique'] = unique_values_count
 
-    chi_025, chi_075 = np.percentile(actual_values, [25, 75])
-    result['chi_25'] = chi_025
-    result['chi_75'] = chi_075
-
     # result['gain'] = 0.0
 
     def analyze_continuous():
@@ -134,6 +151,11 @@ def analyze_attribute(values: list) -> dict:
         result['median'] = statistics.median(actual_values)
         result['max'] = max(actual_values)
         result['standard deviation'] = sqrt(np.var(actual_values))
+
+        chi_025, chi_075 = np.percentile(actual_values, [25, 75])
+
+        result['chi_25'] = chi_025
+        result['chi_75'] = chi_075
 
         return result
 
@@ -202,8 +224,6 @@ def main() -> None:
         attribute_info = {}
         to_remove = []
 
-        target = [row[-2:] for row in data]
-
         for i in range(len(headers)):
             values = [row[i] for row in data]
             if all(isnan(it) for it in values):
@@ -222,9 +242,11 @@ def main() -> None:
 
             attribute_info[i] = analysis_result
 
+        target = [row[-2:] for row in data]
+
         for attribute, info in attribute_info.items():
             values = [row[attribute] for row in data]
-            info.update({'gain': gain_ratio(target, values)})
+            info |= {'gain_ratio': gain_ratio(target, values)}
 
             print(headers[attribute])
             unique_count = info['unique']
