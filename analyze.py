@@ -121,6 +121,10 @@ def analyze_attribute(values: list) -> dict:
     unique_values_count = len(unique_values)
     result['unique'] = unique_values_count
 
+    chi_025, chi_075 = np.percentile(actual_values, [25, 75])
+    result['chi_25'] = chi_025
+    result['chi_75'] = chi_075
+
     # result['gain'] = 0.0
 
     def analyze_continuous():
@@ -179,6 +183,8 @@ def compute_correlation_matrix(data: list[list], headers: list[str]) -> p.DataFr
     correlation_matrix = data_frame.corr(min_periods=1)
 
     correlation_matrix.to_csv('correlation.csv', sep=';', float_format='%.3f')
+
+    correlation_matrix.values[np.tril_indices(len(correlation_matrix))] = np.nan
 
     return correlation_matrix
 
