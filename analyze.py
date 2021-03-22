@@ -1,19 +1,28 @@
 #!python
-import json
-import statistics
-from math import isnan, log, sqrt
-
-import numpy as np
-import pandas as p
-import seaborn as sns
-from matplotlib import pyplot as plt
 
 import csv
 from const import CLEAN_DATA_FILE_NAME
+from math import isnan, log, sqrt
+from matplotlib import pyplot as plt
+import numpy as np
+import pandas as p
+import seaborn as sns
+from gauss import gauss
+import pprint
+import statistics
+
+pp = pprint.PrettyPrinter(indent=4)
 
 
 def has_value(cell: str) -> bool:
     return cell and cell not in {'-', '#ЗНАЧ!', 'NaN', 'не спускался'}
+
+
+def column(data: list[list[float]], idx: int, filter_not_nan=False) -> list[float]:
+    if filter_not_nan:
+        return [row[idx] for row in data if not isnan(row[idx])]
+
+    return [row[idx] for row in data]
 
 
 def parse_data(data: list[list]) -> list[list]:
@@ -26,7 +35,8 @@ def parse_data(data: list[list]) -> list[list]:
         except ValueError:
             return cell
 
-    get_kgf: callable = lambda a, b: a if isnan(b) else b * 1000
+    def get_kgf(a, b):
+        return a if isnan(b) else b * 1000
 
     data = [list(map(parse_cell, row)) for row in data]
     data = [row[:-2] + [get_kgf(row[-2], row[-1])] for row in data]
@@ -42,92 +52,40 @@ def get_classes(headers: list, data: list[list]) -> dict[str, list]:
     }
 
 
-def plot_histogram_sns(data: list[float], name: str = "") -> None:
-    np_dataset = np.array(data).astype(float)
-    n = 1 + log(len(data), 2)
+def plot_histogram(
+        col: list[float],
+        name: str = '',
+        low=None, high=None,
+        continuous=False,
+        density=False) -> None:
+    col = sorted(col)
+    n = int(1 + log(len(col), 2))
+    arr = plt.hist(col, bins=n, density=density)
+    for i in range(n):
+        plt.text(arr[1][i], arr[0][i], str(int(arr[0][i])) if not density else f'{arr[0][i]:.4f}')
 
-    if np_dataset.var() < 1e-5:
-        print(name + ' has 0 variance, can not define distribution')
-        sns.displot(np_dataset, bins=int(n))
-        plt.title(f'{name}')
-        plt.savefig(name + '.jpg')
-        return
+    title = name
 
-    sns.displot(np_dataset, kde=True, bins=int(n))
-    plt.title(f'{name}')
-    plt.savefig(name + '.jpg')
+    if continuous:
+        mean = float(np.mean(col))  # матожидание
+        variance = float(np.var(col))  # дисперсия
 
+        if variance < 1e-5:
+            return
 
-def reverse_enum(arr: np.ndarray):
-    for index in reversed(range(len(arr))):
-        yield index, arr[index]
+        title += f'\nmean = {mean:.2f} variance = {variance:.2f}'
 
+        dist = gauss(mean, variance)
+        plt.plot(col, list(map(dist, col)))
 
-def unique_counts(np_arr: np.ndarray) -> (np.ndarray, np.ndarray):
-    np_arr_unique, np_arr_counts = np.unique(np_arr, return_counts=True, axis=0)
-    if len(np_arr.shape) == 1:
-        np_arr_unique = np_arr_unique[~np.isnan(np_arr_unique)]
-        actual_length = len(np_arr_unique)
-        if len(np_arr_counts) != actual_length:
-            np_arr_unique = np.append(np_arr_unique, np.nan)
-            isnan_count = np_arr_counts[np_arr_unique.shape[0] - 1:].sum()
-            np_arr_counts = np_arr_counts[:np_arr_unique.shape[0]]
-            np_arr_counts[np_arr_unique.shape[0] - 1] = isnan_count
-    else:
-        if np_arr.shape[1] == 2:
-            for index, value in reverse_enum(np_arr_unique):
-                if index != 0:
-                    if np.isnan(value[0]) and np.isnan(np_arr_unique[index - 1][0]) and np_arr_unique[index - 1][1] == \
-                            value[1]:
-                        np_arr_unique = np.delete(np_arr_unique, index, axis=0)
-                        np_arr_counts[index - 1] += np_arr_counts[index]
-                        np_arr_counts = np.delete(np_arr_counts, index, axis=0)
+    if low and high:
+        plt.axvline(x=low)
+        plt.axvline(x=high)
 
-    return np_arr_unique, np_arr_counts
+    plt.title(title)
 
 
-def entropy(feature_count: float, domain_size: float) -> float:
-    feature_probability = feature_count / domain_size
-    return - feature_probability * log(feature_probability, 2)
-
-
-def gain_ratio(class_: list[list], feature: list[float]) -> float:
-    class_ = np.array(class_).astype(float)
-    feature = np.array(feature).astype(float)
-
-    info_class = 0
-    classes_unique, classes_counts = unique_counts(class_)
-
-    for c_iter in classes_counts:
-        info_class += entropy(c_iter, class_.shape[0])
-
-    info_class_by_feature = 0
-    split_info = 0
-    feat_unique, feat_counts = unique_counts(feature)
-
-    for feat_index in range(len(feat_unique)):
-        feature_probability = feat_counts[feat_index] / feature.shape[0]
-
-        if np.isnan(feat_unique[feat_index]):
-            # TODO: считать ли NaN за отдельный класс?
-            indices = [i for i in range(0, feature.shape[0]) if np.isnan(feature[i])]
-        else:
-            indices = [i for i in range(0, feature.shape[0]) if feature[i] == feat_unique[feat_index]]
-
-        classes_of_feature = class_[indices]
-
-        classes_of_feature_unique, classes_of_feature_count = unique_counts(classes_of_feature)
-        for class_index in range(classes_of_feature_unique.shape[0]):
-            class_of_feature_count = classes_of_feature_count[class_index]
-            info_class_by_feature += feature_probability * entropy(class_of_feature_count, classes_of_feature.shape[0])
-        split_info += - feature_probability * log(feature_probability, 2)
-
-    information_gain = info_class - info_class_by_feature
-
-    return information_gain / split_info
-
-
-def analyze_attribute(values: list) -> dict:
+def analyze_attribute(values: list[float], treat_as_continuous=False) -> dict:
     values = sorted(values)
     result: dict[str, [float, int, str]] = {}
 
@@ -142,20 +100,18 @@ def analyze_attribute(values: list) -> dict:
     unique_values_count = len(unique_values)
     result['unique'] = unique_values_count
 
-    # result['gain'] = 0.0
-
     def analyze_continuous():
         result['type'] = 'continuous'
         result['min'] = min(actual_values)
         result['mean'] = np.mean(actual_values).astype(float)
         result['median'] = statistics.median(actual_values)
         result['max'] = max(actual_values)
-        result['standard deviation'] = sqrt(np.var(actual_values))
+        result['variance'] = sqrt(np.var(actual_values))
 
         chi_025, chi_075 = np.percentile(actual_values, [25, 75])
 
-        result['chi_25'] = chi_025
-        result['chi_75'] = chi_075
+        result['chi_025'] = chi_025
+        result['chi_075'] = chi_075
 
         return result
 
@@ -176,12 +132,40 @@ def analyze_attribute(values: list) -> dict:
 
         return result
 
-    # return analyze_continuous()
+    if treat_as_continuous:
+        return analyze_continuous()
 
-    if unique_values_count < actual_values_count * 0.8:
+    if unique_values_count < actual_values_count * 0.24:
         return analyze_categorical()
     else:
         return analyze_continuous()
+
+
+def analyze_attributes(data: list[list[float]], treat_as_continuous=False) -> dict[int, dict]:
+    columns = len(data[0])
+
+    return {idx: analyze_attribute(column(data, idx), treat_as_continuous) for idx in range(columns)}
+
+
+def save_histograms(data: list[list[float]], headers: list[str], attribute_info: dict[int, dict]) -> None:
+    for idx, info in attribute_info.items():
+        header = headers[idx]
+
+        low, high = None, None
+        plot_norm = False
+
+        if info['type'] == 'continuous':
+            plot_norm = True
+
+            chi_025 = info['chi_025']
+            chi_075 = info['chi_075']
+
+            low = chi_025 - 1.5 * (chi_075 - chi_025)
+            high = chi_075 + 1.5 * (chi_075 - chi_025)
+
+        plt.clf()
+        plot_histogram(column(data, idx, filter_not_nan=True), f'{header} [{info["type"]}]', low, high, plot_norm, True)
+        plt.savefig(f'img/{header}.png')
 
 
 def impute_data(data: list[list], i: int, analysis_result: dict) -> None:
@@ -198,90 +182,440 @@ def impute_data(data: list[list], i: int, analysis_result: dict) -> None:
                 row[i] = mean
 
 
-def compute_correlation_matrix(data: list[list], headers: list[str]) -> p.DataFrame:
+def remove_outliers(data: list[list[float]], idx: int, low: float, high: float) -> list[list[float]]:
+    def is_outlier(value):
+        return not isnan(value) and (value < low or value > high)
+
+    result = []
+
+    for row in data:
+        val = row[idx]
+
+        if is_outlier(val) and idx == KGF_IDX:
+            continue
+
+        if not is_outlier(val) or not isnan(row[-2]):
+            result.append(row)
+
+    return result
+
+
+def has_outliers(col: list[float], low: float, high: float) -> bool:
+    return not all(low <= item <= high or isnan(item) for item in col)
+
+
+def save_outliers(
+        data: list[list[float]],
+        headers: list[str],
+        attribute_info: dict[int, dict]):
+    for idx, header in enumerate(headers):
+        if idx not in attribute_info:
+            continue
+
+        chi_025 = attribute_info[idx]['chi_025']
+        chi_075 = attribute_info[idx]['chi_075']
+
+        low = chi_025 - 1.5 * (chi_075 - chi_025)
+        high = chi_075 + 1.5 * (chi_075 - chi_025)
+
+        if has_outliers(column(data, idx), low, high):
+            plt.clf()
+            plot_histogram(
+                column(data, idx, filter_not_nan=True),
+                f'{header}\nlow = {low:.2f} high = {high:.2f}',
+                low, high
+            )
+            plt.savefig(f'img/outliers/{header}.png')
+
+
+def correlation_matrix(data: list[list], headers: list[str]) -> p.DataFrame:
     np_dataset = np.array(data).astype(float)
 
     data_frame = p.DataFrame(np_dataset, columns=headers)
-    correlation_matrix = data_frame.corr(min_periods=1)
+    matrix = data_frame.corr()
 
-    correlation_matrix.to_csv('correlation.csv', sep=';', float_format='%.3f')
+    matrix.to_csv('csv/correlation.csv', sep=';', float_format='%.3f')
 
-    correlation_matrix.values[np.tril_indices(len(correlation_matrix))] = np.nan
+    matrix.values[np.tril_indices(len(matrix))] = np.nan
 
-    return correlation_matrix
+    return matrix
+
+
+CORR_THRESHOLD = 0.95
+CORR_DIFF_THRESHOLD = 0.3
+
+
+def show_heatmap(corr_mat: p.DataFrame, headers: list[str]) -> None:
+    sns.heatmap(corr_mat, xticklabels=range(len(headers)), yticklabels=1, linewidths=.5)
+    plt.show()
+
+
+def inspect_correlations(data: list[list[float]], headers: list[str], target: list[int]) -> list[tuple[str, str]]:
+    corr_mat = correlation_matrix(data, headers)
+
+    attr_correlated_elements = np.extract(corr_mat >= CORR_THRESHOLD, corr_mat)
+    i, j = np.where(corr_mat >= CORR_THRESHOLD)
+
+    highly_correlated = []
+
+    print("\n===\n")
+
+    for idx, (i1, i2) in enumerate(zip(i, j)):
+        h1 = headers[i1]
+        h2 = headers[i2]
+
+        highly_correlated.append((h1, h2))
+
+    for (h1, h2) in highly_correlated:
+        print(f'{"[target] " if h1 in target or h2 in target else ""}"{h1}" x "{h2}" = {corr_mat[h2][h1]:.2f}')
+
+    attributes = corr_mat.columns.values
+
+    print("\n===\n")
+
+    leave_only_one = []
+
+    for (h1, h2) in highly_correlated:
+        need_both = False
+        for other in attributes:
+            if other == h1 or other == h2:
+                continue
+
+            corr_h1_other = corr_mat[other][h1] if isnan(corr_mat[h1][other]) else corr_mat[h1][other]
+            corr_h2_other = corr_mat[h2][other] if isnan(corr_mat[other][h2]) else corr_mat[other][h2]
+
+            if isnan(corr_h2_other) or isnan(corr_h1_other):
+                continue
+
+            if abs(corr_h2_other - corr_h1_other) >= CORR_DIFF_THRESHOLD:
+                need_both = True
+                break
+
+        if not need_both:
+            leave_only_one.append((h1, h2))
+            print(f'"{h1}" and "{h2}" are very much alike, leave one with the higher gain ratio')
+
+    print("\n===\n")
+
+    show_heatmap(corr_mat, headers)
+
+    return leave_only_one
+
+
+def classes(col: list[float]) -> list[tuple[float, float]]:
+    min_value = min(col)
+    max_value = max(col)
+    span = max_value - min_value
+    unique_count = len(set(col))
+    bins_count = int(1 + log(unique_count, 2))
+    bin_width = span / bins_count
+
+    return [(min_value + bin_width * i, min_value + bin_width * (i + 1)) for i in range(bins_count)]
+
+
+def within_class(value: float, cls: tuple[float, float], last_class=False) -> bool:
+    min_value, max_value = cls
+    return min_value <= value < max_value if not last_class else min_value <= value <= max_value + 1e-5
+
+
+def apply_classes(data: list[list[float]], idx: int, cls: list[tuple[float, float]]) -> None:
+    for row in data:
+        value = row[idx]
+        for i, c in enumerate(cls):
+            if within_class(value, c, i == len(cls) - 1):
+                row[idx] = i
+                break
+
+        if row[idx] not in range(len(cls)):
+            raise ValueError('cell value does not belong to any class')
+
+
+def rows_with_value(data: list[list[float]], idx: int, value: float) -> list[list[float]]:
+    return [row for row in data if row[idx] == value or isnan(row[idx]) and isnan(value)]
+
+
+def equal_classes(c1: tuple[float, float], c2: tuple[float, float]) -> bool:
+    return isnan(c1[0]) and isnan(c2[0]) and c1[1] == c2[1] \
+           or c1 == c2
+
+
+def gain_ratios(
+        data: list[list[float]],
+        indices: list[int],
+        target_classes: list[tuple[float, float]]) -> dict[int, float]:
+    data_size = len(data)
+
+    def freq(cj: tuple[float, float], t: list[list[float]]) -> int:
+        return sum(1 for r in t if equal_classes((r[-2], r[-1]), cj))
+
+    def info(t: list[list[float]] = None) -> float:
+        if not t:
+            t = data
+
+        t_size = len(t)
+        return -sum(freq(cj, t) / t_size * log(freq(cj, t) / t_size, 2) for cj in target_classes if freq(cj, t) != 0)
+
+    def info_x(x: int) -> float:
+        unique_values = set(column(data, x, filter_not_nan=True))
+        if any(isnan(it) for it in column(data, x)):
+            unique_values.add(float('nan'))
+
+        return sum(
+            len(rows_with_value(data, x, value)) / data_size * info(rows_with_value(data, x, value))
+            for value in unique_values
+        )
+
+    def split_info_x(x: int) -> float:
+        unique_values = set(column(data, x, filter_not_nan=True))
+        if any(isnan(it) for it in column(data, x)):
+            unique_values.add(float('nan'))
+
+        return -sum(
+            len(rows_with_value(data, x, value)) / data_size
+            * log(len(rows_with_value(data, x, value)) / data_size, 2)
+            for value in unique_values
+        )
+
+    def gain_ratio(x: int) -> float:
+        i = info()
+        i_x = info_x(x)
+        s_i_x = split_info_x(x)
+        gr = (i - i_x) / s_i_x
+        # print(f'x = {x}, info = {i:.2f}, info_x = {i_x:.2f}, split_info_x = {s_i_x:.2f}, gr = {gr:.2f}')
+        return gr
+
+    return {idx: gain_ratio(idx) for idx in indices}
+
+
+def extract_target_classes(data: list[list[float]]) -> list[tuple[float, float]]:
+    cls = set((row[-2], row[-1]) for row in data)
+    result = []
+
+    for c in cls:
+        if any(equal_classes(c, it) for it in result):
+            continue
+
+        result.append(c)
+
+    return result
+
+
+MAX = 10_000
+MIN = -MAX
+
+KGF_IDX = 30
 
 
 def main() -> None:
     with open(CLEAN_DATA_FILE_NAME, 'r') as data_file:
         reader = csv.reader(data_file, delimiter=';')
         rows = list(reader)
-
-        headers, data = rows[0][0:-1], rows[1:]
+        headers, data = [f'({idx}) {item}' for idx, item in enumerate(rows[0][2:-1])], rows[1:]
         data = parse_data(data)
-        data = [row[0:] for row in data]
-        print(f'{len(data)} rows of data')
+        data = [row[2:] for row in data]
 
-        attribute_info = {}
-        to_remove = []
+        target = [len(headers) - 2, len(headers) - 1]
 
-        for i in range(len(headers)):
-            values = [row[i] for row in data]
-            if all(isnan(it) for it in values):
-                continue
-            analysis_result = analyze_attribute(values)
-            if analysis_result['empty %'] > 60:
-                print(f"[warning] {headers[i]}: {analysis_result['empty %']:.2f}% missing data")
-                if headers[i] != 'КГФ' and headers[i] != 'G_total':
-                    to_remove.append(i)
+        continuous_idx = []
+        categorical_idx = []
+        not_enough_data_idx = []
+        single_unique_value_idx = []
 
-            if 0 < analysis_result['empty %'] < 30:
+        # Поглядим на выбросы
+        attribute_info = analyze_attributes(data, treat_as_continuous=True)
+        # save_outliers(data, headers, attribute_info)
+        remove_outliers_idx = [
+            (3, 200, MAX),
+            (4, None, None),
+            (6, None, MAX),
+            (7, 60, MAX),
+            (9, MIN, 70),
+            (10, 102, MAX),
+            (12, MIN, None),
+            (13, MIN, 200),
+            (14, MIN, 7.1),
+            (15, MIN, None),
+            (17, MIN, 300),
+            (18, MIN, None),
+            (26, 700, MAX),
+            (28, 0.62, MAX),
+            (30, MIN, 325)
+        ]
+
+        data_len = len(data)
+
+        for idx, low, high in remove_outliers_idx:
+            chi_025 = attribute_info[idx]['chi_025']
+            chi_075 = attribute_info[idx]['chi_075']
+
+            if not low:
+                low = chi_025 - 1.5 * (chi_075 - chi_025)
+
+            if not high:
+                high = chi_025 + 1.5 * (chi_075 - chi_025)
+
+            data = remove_outliers(data, idx, low, high)
+
+        print(f'removed {data_len - len(data)} rows of data')
+
+        # Поглядим на пропуски, заполним где можно, удалим где нужно
+        attribute_info = analyze_attributes(data)
+
+        # Гистограммы распределения значений
+        # save_histograms(data, headers, attribute_info)
+
+        # Распределение признаков по всяким категориям
+        for idx, header in enumerate(headers):
+            info = attribute_info[idx]
+
+            unique = info["unique"]
+            t = info["type"]
+            empty = info['empty %']
+
+            if t == 'continuous':
+                continuous_idx.append(idx)
+            else:
+                categorical_idx.append(idx)
+
+            if unique == 1:
+                single_unique_value_idx.append(idx)
+
+            if empty > 60 and idx not in target:
+                print(f"[not enough data] {header}: {empty:.2f}% missing data")
+                not_enough_data_idx.append(idx)
+            elif 0 < empty < 30:
                 print(
-                    f"[can impute] {headers[i]} ({analysis_result['type']}): {analysis_result['empty %']:.2f}% "
-                    f"missing data")
-                impute_data(data, i, analysis_result)
+                    f"[can impute] {header} ({info['type']}): {empty:.2f}% missing data")
+                impute_data(data, idx, info)
 
-            attribute_info[i] = analysis_result
-
-        target = [row[-2:] for row in data]
-
-        for attribute, info in attribute_info.items():
-            values = [row[attribute] for row in data]
-            info |= {'gain_ratio': gain_ratio(target, values)}
-
-            print(headers[attribute])
-            unique_count = info['unique']
-            total_count = info['total']
-
-            if unique_count < total_count * 0.15:
-                print('few unique values')
-            print(json.dumps(info, indent=4), '\n')
-
-        for i in range(len(headers)):
-            plot_histogram_sns([row[i] for row in data if not isnan(row[i])], headers[i])
-
-        # to_remove.reverse()
+        # for idx in not_enough_data_idx:
+        #     if idx not in attribute_info:
+        #         continue
         #
-        # for index in to_remove:
-        #     del headers[index]
-        #     for row in data:
-        #         del row[index]
+        #     print(f'[removed] {headers[idx]}: not enough data')
+        #     attribute_info.pop(idx)
 
-        correlation_matrix = compute_correlation_matrix(data, headers)
+        for idx in single_unique_value_idx:
+            if idx not in attribute_info:
+                continue
 
-        sns.heatmap(correlation_matrix)
-        plt.savefig('heatmap.jpg')
+            print(f'[removed] {headers[idx]}: single unique value')
+            attribute_info.pop(idx)
 
-        attr_correlated_elements = np.extract(correlation_matrix >= 0.95, correlation_matrix)
-        i, j = np.where(correlation_matrix >= 0.95)
+        somewhat_useful_attributes = sorted(attribute_info.keys())
+        categorical_idx = list(filter(lambda it: it in somewhat_useful_attributes, categorical_idx))
+        continuous_idx = list(filter(lambda it: it in somewhat_useful_attributes, continuous_idx))
 
-        print("====================================================")
-        for k in range(len(i)):
-            print(headers[i[k]] + ' ' + headers[j[k]] + ' ', round(attr_correlated_elements[k], 2))
+        print(len(somewhat_useful_attributes))
 
-        with open('out.csv', 'w', encoding='UTF-8') as out:
-            writer = csv.writer(out, delimiter=';', lineterminator='\t\n')
-            writer.writerow(headers)
-            writer.writerows(data)
+        print('Непрерывные признаки:')
+        for idx in continuous_idx:
+            info = attribute_info[idx]
+
+            unique = info["unique"]
+            total = info["total"]
+
+            print(f'\t{headers[idx]}: {unique}/{total} = {unique / total * 100:.2f}%')
+
+        print('\nКатегориальные признаки:')
+        for idx in categorical_idx:
+            info = attribute_info[idx]
+
+            unique = info["unique"]
+            total = info["total"]
+
+            print(f'\t{headers[idx]}: {unique}/{total} = {unique / total * 100:.2f}%')
+
+        print('\nМного пропусков:')
+        for idx in not_enough_data_idx:
+            print(f'\t{headers[idx]}')
+
+        print('\nЕдинственное уникальное значение:')
+        for idx in single_unique_value_idx:
+            print(f'\t{headers[idx]}')
+
+        categorical_idx.append(KGF_IDX)
+        attribute_classes = {idx: classes(column(data, idx)) for idx in categorical_idx}
+        for idx, cls in attribute_classes.items():
+            apply_classes(data, idx, cls)
+
+        # for row in data:
+        #     print(row)
+
+        # Корреляции
+        highly_correlated = inspect_correlations(data, headers, target)
+
+        target_classes = extract_target_classes(data)
+        print(f'{len(target_classes)} target classes total')
+        pp.pprint(target_classes)
+
+        # nan = float('nan')
+
+        # test_data = [
+        #     [3, 1, nan, 1],
+        #     [2, 2, nan, 1],
+        #     [7, 3, 1, 2],
+        #     [9, 4, 7, 2],
+        #     [4, 1, 2, 3],
+        #     [5, 2, 6, 3],
+        #     [1, 3, 3, 1],
+        #     [3, 4, 5, 1],
+        #     [2, 1, 4, 2],
+        #     [6, 2, nan, 2],
+        #     [4, 3, nan, 3],
+        # ]
+        #
+        # tg = extract_target_classes(test_data)
+        # pp.pprint(tg)
+        # h = ['attr 1', 'attr 2', 'target 1', 'target 2']
+        #
+        # gr = gain_ratios(test_data, list(range(len(h))), tg)
+        # attribute_gain_ratio = sorted(
+        #     [(h[idx], gain_ratio) for idx, gain_ratio in gr.items()],
+        #     key=lambda item: -item[1])
+        # pp.pprint(attribute_gain_ratio)
+
+        gr = gain_ratios(data, somewhat_useful_attributes, target_classes)
+        header_to_gain_ratio = {headers[idx]: gain_ratio for idx, gain_ratio in gr.items()}
+
+        drop = []
+
+        for (h1, h2) in highly_correlated:
+            if h1 not in header_to_gain_ratio or h2 not in header_to_gain_ratio:
+                continue
+            h1_gain_ratio = header_to_gain_ratio[h1]
+            h2_gain_ratio = header_to_gain_ratio[h2]
+
+            if h1_gain_ratio > h2_gain_ratio:
+                drop.append(h2)
+                print(f'[drop] "{h2}": correlates with "{h1}" which has a higher gain ratio')
+            if h2_gain_ratio > h1_gain_ratio:
+                drop.append(h1)
+                print(f'[drop] "{h1}": correlates with "{h2}" which has a higher gain ratio')
+
+        for it in drop:
+            if it not in header_to_gain_ratio:
+                continue
+            header_to_gain_ratio.pop(it)
+
+        attribute_gain_ratio = sorted(
+            [(header, gain_ratio) for header, gain_ratio in header_to_gain_ratio.items()],
+            key=lambda item: -item[1])[2:]
+        # pp.pprint(attribute_gain_ratio)
+
+        gain_ratio_values = [gr for (_, gr) in attribute_gain_ratio]
+        gain_ratio_headers = [name for (name, _) in attribute_gain_ratio]
+
+        print('Attributes that survived the cleansing:')
+        for header in sorted(gain_ratio_headers, key=lambda h: headers.index(h)):
+            print(f'\t{header} (gain ratio = {header_to_gain_ratio[header]:.3f})')
+            if headers.index(header) in attribute_classes:
+                print(f'\t\tclasses = {attribute_classes[headers.index(header)]}')
+
+        plt.clf()
+        # plt.xticks(rotation='vertical')
+        plt.barh(gain_ratio_headers, width=gain_ratio_values)
+        plt.show()
 
 
 if __name__ == '__main__':
